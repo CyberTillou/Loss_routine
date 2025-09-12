@@ -1,14 +1,61 @@
 import sys
 import time
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                             QTextEdit, QHBoxLayout, QLabel, QLineEdit)
+                             QTextEdit, QHBoxLayout, QLabel, QLineEdit, QDialog,
+                             QFileDialog)
 from PyQt5.QtCore import QThread, pyqtSignal
 import pyqtgraph as pg
 from PyQt5.QtGui import QFont, QColor, QPalette, QDoubleValidator
+import os
+from datetime import datetime
+import pyqtgraph.exporters
 
 # Import your external modules (adjust paths as needed)
 from tunics_laser import TunicsLaser
 from powermeter import FM_DLL, FM_Communication, FM_Measure, FM_Synchronizer
+
+
+class SaveFolderDialog(QDialog):
+    def __init__(self, current_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Saving data to file")
+        self.resize(600, 100)
+
+        layout = QVBoxLayout()
+
+        label = QLabel("Path to file directory")
+        layout.addWidget(label)
+
+        h_layout = QHBoxLayout()
+        self.path_edit = QLineEdit(current_path)
+        h_layout.addWidget(self.path_edit)
+
+        self.browse_button = QPushButton("📁")
+        h_layout.addWidget(self.browse_button)
+        self.browse_button.clicked.connect(self.browse_folder)
+
+        layout.addLayout(h_layout)
+
+        btn_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Cancel")
+        btn_layout.addWidget(self.ok_button)
+        btn_layout.addWidget(self.cancel_button)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Directory", self.path_edit.text())
+        if folder:
+            self.path_edit.setText(folder)
+
+    def get_path(self):
+        return self.path_edit.text()
+
 
 class ScanThread(QThread):
     new_data = pyqtSignal(float, float)
@@ -66,10 +113,11 @@ class ScanThread(QThread):
     def stop(self):
         self._running = False
 
+
 class PowerScanGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Laser + Powermeter Scan")
+        self.setWindowTitle("Loss scan")
         self.resize(800, 650)
 
         QApplication.setStyle('Fusion')
@@ -88,14 +136,15 @@ class PowerScanGUI(QWidget):
         palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         self.setPalette(palette)
 
+        self.save_folder = self.save_folder = r"C:\Users\tperson\Desktop\loss_measurment\measurment_result"
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
 
-        # Add input fields layout
+        # Input fields layout
         input_layout = QHBoxLayout()
 
-        # Validator for float input
         float_validator = QDoubleValidator(0.0, 10000.0, 3, self)
 
         self.label_start = QLabel("Start Wavelength (nm):")
@@ -119,20 +168,13 @@ class PowerScanGUI(QWidget):
         main_layout.addLayout(input_layout)
 
         self.plot_widget = pg.PlotWidget()
-        # After creating self.plot_widget:
-
         self.plot_widget.setBackground('w')
         self.plot_widget.setLabel('bottom', 'Wavelength (nm)', color='#101010', size='12pt')
         self.plot_widget.setLabel('left', 'Power (mW)', color='#101010', size='12pt')
-
-        # Set axes pen (lines) darker
         self.plot_widget.getAxis('bottom').setPen(pg.mkPen(color='#101010', width=1.5))
         self.plot_widget.getAxis('left').setPen(pg.mkPen(color='#101010', width=1.5))
-
-        # Set tick color (labels and ticks)
         self.plot_widget.getAxis('bottom').setTextPen(pg.mkPen('#101010'))
         self.plot_widget.getAxis('left').setTextPen(pg.mkPen('#101010'))
-
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.curve = self.plot_widget.plot([], [], pen=pg.mkPen('r', width=2))
         main_layout.addWidget(self.plot_widget)
@@ -142,6 +184,10 @@ class PowerScanGUI(QWidget):
         self.log_console.setFont(QFont('Consolas', 10))
         self.log_console.setStyleSheet("background-color: #f0f0f0; color: #101010; border: 1px solid #ccc;")
         main_layout.addWidget(self.log_console, 1)
+
+        self.choose_folder_button = QPushButton("Choose save folder")
+        main_layout.addWidget(self.choose_folder_button)
+        self.choose_folder_button.clicked.connect(self.open_save_folder_dialog)
 
         self.start_button = QPushButton("Start Scan")
         self.stop_button = QPushButton("Stop Scan")
@@ -196,6 +242,41 @@ class PowerScanGUI(QWidget):
 
         self.thread = None
 
+    def open_save_folder_dialog(self):
+        dialog = SaveFolderDialog(self.save_folder, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.save_folder = dialog.get_path()
+            self.log(f"Save folder set to: {self.save_folder}")
+
+    def save_data(self):
+        if not self.data_x or not self.data_y:
+            self.log("No data to save.")
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        folder_name = f"{timestamp}_losses"
+        full_path = os.path.join(self.save_folder, folder_name)
+
+        try:
+            os.makedirs(full_path, exist_ok=True)
+            file_path = os.path.join(full_path, "data.txt")
+
+            with open(file_path, "w") as f:
+                f.write("Wavelength (nm)\tPower (mW)\n")
+                for wl, power in zip(self.data_x, self.data_y):
+                    f.write(f"{wl:.3f}\t{power:.6f}\n")
+
+            self.log(f"Data saved at : {file_path}")
+        except Exception as e:
+            self.log(f"Error while saving : {e}")
+        
+        # Save plot as PNG
+        png_path = os.path.join(full_path, "plot.png")
+        exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+        exporter.parameters()['width'] = 800  # optional, size in pixels
+        exporter.export(png_path)
+        self.log(f"Graphique sauvegardé dans : {png_path}")
+
     def log(self, msg):
         self.log_console.append(msg)
 
@@ -205,7 +286,6 @@ class PowerScanGUI(QWidget):
         self.curve.setData(self.data_x, self.data_y)
 
     def start_scan(self):
-        # Validate inputs and convert to float
         try:
             wl_start = float(self.input_start.text())
             wl_stop = float(self.input_stop.text())
@@ -247,12 +327,14 @@ class PowerScanGUI(QWidget):
         self.log("Scan finished.")
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.save_data()
 
     def closeEvent(self, event):
         if self.thread and self.thread.isRunning():
             self.thread.stop()
             self.thread.wait()
         event.accept()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
