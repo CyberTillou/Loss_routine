@@ -9,6 +9,8 @@ from PyQt5.QtGui import QFont, QColor, QPalette, QDoubleValidator
 import os
 from datetime import datetime
 import pyqtgraph.exporters
+from PyQt5.QtGui import QRegularExpressionValidator
+from PyQt5.QtCore import QRegularExpression
 
 # Import your external modules (adjust paths as needed)
 from tunics_laser import TunicsLaser
@@ -136,7 +138,7 @@ class PowerScanGUI(QWidget):
         palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         self.setPalette(palette)
 
-        self.save_folder = self.save_folder = r"C:\Users\tperson\Desktop\loss_measurment\measurment_result"
+        self.save_folder = r"C:\Users\tperson\Desktop\loss_measurment\measurment_result"
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(15, 15, 15, 15)
@@ -145,7 +147,8 @@ class PowerScanGUI(QWidget):
         # Input fields layout
         input_layout = QHBoxLayout()
 
-        float_validator = QDoubleValidator(0.0, 10000.0, 3, self)
+        regex = QRegularExpression(r"^-?\d{0,5}(\.\d{0,5})?$")  # accepte jusqu’à 5 chiffres + décimale
+        float_validator = QRegularExpressionValidator(regex, self)
 
         self.label_start = QLabel("Start Wavelength (nm):")
         self.input_start = QLineEdit("1549.0")
