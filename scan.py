@@ -102,15 +102,27 @@ class ScanThread(QThread):
 
                 wl += self.wl_step
 
-            self.comm.close()
-            self.comm.deinitialize()
-            self.laser.close()
-
-            self.scan_finished.emit()
             self.log_signal.emit("Scan finished.")
 
         except Exception as e:
             self.log_signal.emit(f"Error during scan: {e}")
+
+        finally:
+            self.log_signal.emit("Closing communication ports...")
+            try:
+                if hasattr(self, 'comm'):
+                    self.comm.close()
+                    self.comm.deinitialize()
+            except Exception as e:
+                self.log_signal.emit(f"Error closing powermeter: {e}")
+
+            try:
+                if hasattr(self, 'laser'):
+                    self.laser.close()
+            except Exception as e:
+                self.log_signal.emit(f"Error closing laser: {e}")
+
+            self.scan_finished.emit()
 
     def stop(self):
         self._running = False
@@ -307,7 +319,11 @@ class PowerScanGUI(QWidget):
         self.data_y.clear()
         self.curve.clear()
 
-        delay = 0.5  # Delay can be made adjustable if needed
+        # 🔒 Fix axis range from start to stop
+        self.plot_widget.setXRange(wl_start, wl_stop)
+        self.plot_widget.enableAutoRange(axis='x', enable=False)  # Disable auto scaling on X
+
+        delay = 0.5
 
         self.thread = ScanThread(self.laser_resource, self.dll_path, wl_start, wl_stop, wl_step, delay)
         self.thread.new_data.connect(self.update_plot)
@@ -322,7 +338,9 @@ class PowerScanGUI(QWidget):
     def stop_scan(self):
         if self.thread:
             self.thread.stop()
-            self.log("Scan stop requested.")
+            self.thread.wait()  # Wait for the thread to finish cleanup
+            self.thread = None
+            self.log("Scan stopped.")
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
 
@@ -333,10 +351,12 @@ class PowerScanGUI(QWidget):
         self.save_data()
 
     def closeEvent(self, event):
-        if self.thread and self.thread.isRunning():
+        if self.thread:
             self.thread.stop()
             self.thread.wait()
+            self.thread = None
         event.accept()
+
 
 
 if __name__ == "__main__":

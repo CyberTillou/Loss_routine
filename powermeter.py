@@ -160,5 +160,77 @@ class FM_Measure:
             #    print(f"Mesure 0: {self.data_buffer[0].measure}")
             time.sleep(delay)
         return self.data_buffer[0].measure
+def main():
+    # 🔧 Path to your DLL (update this to the correct location)
+    dll_path =r"C:\Program Files (x86)\Coherent\FieldMaxII PC\Drivers\Win10\FieldMax2Lib\x64\FieldMax2Lib.dll"
+
+    # Initialize required objects
+    dll_wrapper = FM_DLL(dll_path)
+    comm = FM_Communication(dll_wrapper)
+    synchronizer = None
+    device_info = None
+    measurer = None
+
+    try:
+        # 1. Initialize the FieldMax DLL
+        comm.initialize()
+
+        # 2. Open the driver and get device handle
+        comm.open()
+
+        # 3. Synchronize communication
+        synchronizer = FM_Synchronizer(dll_wrapper, comm.handle)
+        synchronizer.synchronize()
+
+        # 4. Get and print the serial number
+        device_info = FM_DeviceInfo(dll_wrapper, comm.handle)
+        serial = device_info.get_serial_number()
+        print(f"Device serial number: {serial}")
+
+        # 5. Take a power measurement
+        measurer = FM_Measure(dll_wrapper, comm.handle)
+        measured_power = measurer.get_measurements(iterations=5, delay=0.5)
+        print(f"Measured power: {measured_power:.6f} W")
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
+
+    finally:
+        # 6. Properly close everything
+        try:
+            comm.close()
+            print("Device closed successfully.")
+        except Exception as e:
+            print(f"[ERROR while closing device] {e}")
+
+        try:
+            comm.deinitialize()
+            print("DLL deinitialized successfully.")
+        except Exception as e:
+            print(f"[ERROR while deinitializing DLL] {e}")
+
+def manual_close():
+    # 🔧 Path to your DLL (update accordingly)
+    dll_path =r"C:\Program Files (x86)\Coherent\FieldMaxII PC\Drivers\Win10\FieldMax2Lib\x64\FieldMax2Lib.dll"
+
+    try:
+        # Load and initialize the DLL
+        dll_wrapper = FM_DLL(dll_path)
+        comm = FM_Communication(dll_wrapper)
+
+        # Immediately close and deinitialize
+        comm.close()
+        print("Device handle manually closed.")
+
+        comm.deinitialize()
+        print("DLL deinitialized successfully.")
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
+
+if __name__ == "__main__":
+    manual_close()
+
+
 
 

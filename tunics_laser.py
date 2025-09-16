@@ -69,3 +69,26 @@ class TunicsLaser:
         """Close the VISA resource."""
         self.inst.close()
         self.rm.close()
+
+def main():
+    resource_address = "ASRL4::INSTR"
+    laser = None  # Initialisation
+
+    try:
+        # Création de l'instance du laser
+        laser = TunicsLaser(resource_address)
+
+        # Exemple de commande supportée par le laser
+        print("Current wavelenght :", laser.get_wavelength())
+
+    except Exception as e:
+        print("Error of communication with laser :", e)
+
+    finally:
+        if laser is not None:
+            laser.close()
+            print("Communication with laser closed.")
+
+
+if __name__ == "__main__":
+    main()
