@@ -229,7 +229,10 @@ def manual_close():
         print(f"[ERROR] {e}")
 
 if __name__ == "__main__":
-    manual_close()
+    #call main() to check if everything is working fine
+    #call manual_close() to just close the device if it was left open
+    #Plug and unplug the USB device is also an option if nothing is working.
+    main()
 
 
 

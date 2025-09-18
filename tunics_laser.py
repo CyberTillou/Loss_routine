@@ -91,4 +91,6 @@ def main():
 
 
 if __name__ == "__main__":
+    #call main to check if everything is working fine.
+    #Check also the correct port is connectecd to the laser.
     main()
