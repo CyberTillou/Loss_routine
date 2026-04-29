@@ -1,3 +1,4 @@
+# Powermeter coherent
 import ctypes
 import time
 import sys

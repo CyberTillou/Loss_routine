@@ -4,7 +4,7 @@ import scipy.signal as signal
 import matplotlib.pyplot as plt
 
 # === Base path to measurement folders ===
-base_folder = r"C:\Users\tperson\Desktop\loss_measurment\measurment_result\guide-76"
+base_folder = r"C:\Users\equipe qite\Desktop\loss_measurment\measurment_result\2026-04-24_10-17-47_losses"
 
 # === Locate TE, TM, and RAW subfolders ===
 te_folder = ""
