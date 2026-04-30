@@ -11,8 +11,9 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QDialog,
     QFileDialog,
+    QComboBox,
 )
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QWaitCondition
 import pyqtgraph as pg
 from PyQt5.QtGui import QFont, QColor, QPalette, QDoubleValidator
 import os
@@ -20,7 +21,15 @@ from datetime import datetime
 import pyqtgraph.exporters
 from PyQt5.QtGui import QRegularExpressionValidator
 from PyQt5.QtCore import QRegularExpression
-from ctypes import c_bool, c_double, c_uint32, c_int, create_string_buffer, byref
+from ctypes import (
+    c_bool,
+    c_double,
+    c_uint32,
+    c_int,
+    c_int16,
+    create_string_buffer,
+    byref,
+)
 
 # Import your external modules (adjust paths as needed)
 from tunics_laser import TunicsLaser
@@ -75,14 +84,18 @@ class ScanThread(QThread):
     new_data = pyqtSignal(float, float)
     log_signal = pyqtSignal(str)
     scan_finished = pyqtSignal()
+    choose_powermeter = pyqtSignal(list)
 
     def __init__(self, laser_resource, wl_start, wl_stop, wl_step, delay):
         super().__init__()
         self.laser_resource = laser_resource
+        self.powermeter_id = -1  # Is a negative number better than None?
         self.wl_start = wl_start
         self.wl_stop = wl_stop
         self.wl_step = wl_step
         self.delay = delay
+        self.mutex = QMutex()
+        self.wait_cond = QWaitCondition()
         self._running = True
 
     def run(self):
@@ -97,8 +110,40 @@ class ScanThread(QThread):
             self.log_signal.emit(
                 "Powermeter devices found: " + str(powermeterDeviceCount.value)
             )
-            powermeterResourceName = create_string_buffer(1024)
-            self.powermeter.getRsrcName(c_int(0), powermeterResourceName)
+            if powermeterDeviceCount.value > 1:
+                # If more than 1 powermeter is connected, get names of all powermeters
+                powermeter_names = []
+                powermeterResourceName = create_string_buffer(1024)
+                modelName = create_string_buffer(1024)
+                serialNumber = create_string_buffer(1024)
+                manufacturer = create_string_buffer(1024)
+                deviceAvailable = c_int16(0)
+                for i_powermeter in range(powermeterDeviceCount.value):
+                    self.powermeter.getRsrcInfo(
+                        c_int(i_powermeter),
+                        modelName,
+                        serialNumber,
+                        manufacturer,
+                        byref(deviceAvailable),
+                    )
+                    powermeter_names.append(
+                        f'{str(modelName.value.decode("utf-8"))} (SN: {str(serialNumber.value.decode("utf-8"))})'
+                    )
+                # Send signal to ask main thread to open Dialog to choose powermeter (together with powermeter names)
+                self.choose_powermeter.emit(powermeter_names)
+                # Wait for response
+                self.mutex.lock()
+                self.wait_cond.wait(self.mutex)
+                self.mutex.unlock()
+
+            else:
+                # Otherwise, connect to the first (and only) powermeter
+                self.powermeter_id = 0
+
+            # Connect to powermeter
+            self.powermeter.getRsrcName(
+                c_int(self.powermeter_id), powermeterResourceName
+            )
             self.powermeter.open(powermeterResourceName, c_bool(True), c_bool(False))
 
             wl = self.wl_start
@@ -122,11 +167,10 @@ class ScanThread(QThread):
 
         finally:
             self.log_signal.emit("Closing communication ports...")
-            try:
-                if hasattr(self, "powermeter"):
-                    self.powermeter.close()
-            except Exception as e:
-                self.log_signal.emit(f"Error closing powermeter: {e}")
+            # Thorlabs' powermeter driver does not throw exceptions, it only sets the return value of close() (0 for success)
+            if hasattr(self, "powermeter"):
+                if self.powermeter.close() != 0:
+                    self.log_signal.emit(f"Error closing powermeter.")
 
             try:
                 if hasattr(self, "laser"):
@@ -138,6 +182,36 @@ class ScanThread(QThread):
 
     def stop(self):
         self._running = False
+
+
+class PowermeterChoiceDialog(QDialog):
+    def __init__(self, powermeters: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose powermeter")
+        self.resize(600, 100)
+
+        layout = QVBoxLayout()
+
+        label = QLabel("Choose powermeter")
+        layout.addWidget(label)
+
+        self.powermeter_dropdown = QComboBox()
+        self.powermeter_dropdown.addItems(powermeters)
+        layout.addWidget(self.powermeter_dropdown)
+
+        self.ok_button = QPushButton("OK")
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.ok_button.setDefault(True)
+
+    def get_powermeter_index(self):
+        return self.powermeter_dropdown.currentIndex()
+
+    def get_powermeter_name(self):
+        return self.powermeter_dropdown.currentText()
 
 
 class PowerScanGUI(QWidget):
@@ -190,7 +264,7 @@ class PowerScanGUI(QWidget):
         input_layout.addWidget(self.input_stop)
 
         self.label_step = QLabel("Step (nm):")
-        self.input_step = QLineEdit("0.05")
+        self.input_step = QLineEdit("0.01")
         self.input_step.setValidator(float_validator)
         input_layout.addWidget(self.label_step)
         input_layout.addWidget(self.input_step)
@@ -276,6 +350,7 @@ class PowerScanGUI(QWidget):
         self.data_y = []
 
         self.laser_resource = "ASRL4::INSTR"
+        self.powermeter_selected = pyqtSignal(int)
         self.thread = None
 
     def open_save_folder_dialog(self):
@@ -352,6 +427,7 @@ class PowerScanGUI(QWidget):
         self.thread.new_data.connect(self.update_plot)
         self.thread.log_signal.connect(self.log)
         self.thread.scan_finished.connect(self.scan_finished)
+        self.thread.choose_powermeter.connect(self.select_powermeter)
         self.thread.start()
 
         self.start_button.setEnabled(False)
@@ -372,6 +448,18 @@ class PowerScanGUI(QWidget):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.save_data()
+
+    def select_powermeter(self, powermeter_names: list[str]):
+        powermeter_choice_dialog = PowermeterChoiceDialog(powermeter_names, self)
+        if powermeter_choice_dialog.exec_() == QDialog.DialogCode.Accepted:
+            powermeter_id = powermeter_choice_dialog.get_powermeter_index()
+            powermeter_name = powermeter_choice_dialog.get_powermeter_name()
+            self.log(f"Selected Powermeter {powermeter_name}")
+            # Lock the mutex, send the response to ScanThread, wake it and unlock the mutex
+            self.thread.mutex.lock()
+            self.thread.powermeter_id = powermeter_id
+            self.thread.wait_cond.wakeAll()
+            self.thread.mutex.unlock()
 
     def closeEvent(self, event):
         if self.thread:
